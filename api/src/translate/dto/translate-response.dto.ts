@@ -1,0 +1,38 @@
+/**
+ * DTO cho response dịch thuật từ Ollama Chat API
+ */
+export interface OllamaChatResponse {
+  model: string;
+  created_at: string;
+  message: {
+    role: string;
+    content: string;
+  };
+  done: boolean;
+  total_duration?: number;
+  load_duration?: number;
+  prompt_eval_count?: number;
+  prompt_eval_duration?: number;
+  eval_count?: number;
+  eval_duration?: number;
+}
+
+/**
+ * DTO cho response dịch thuật trả về cho client
+ */
+export class TranslateResponseDto {
+  /**
+   * Nội dung đã dịch
+   */
+  translatedText: string;
+
+  /**
+   * Model được sử dụng
+   */
+  model: string;
+
+  /**
+   * Thời gian xử lý (ms)
+   */
+  duration?: number;
+}

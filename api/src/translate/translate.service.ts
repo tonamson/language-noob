@@ -6,22 +6,29 @@ import {
   TranslateResponseDto,
   OllamaChatResponse,
 } from './dto/translate-response.dto';
+import {
+  ImageTranslateResponseDto,
+  TranslatedBlock,
+} from './dto/image-translate.dto';
 import { ConfigService } from '@nestjs/config';
+import { ImageOcrService, OcrResult } from './services/image-ocr.service';
 
 /**
  * Service xử lý logic dịch thuật thông qua Ollama API
+ * Hỗ trợ dịch text và dịch ảnh với OCR
  */
 @Injectable()
 export class TranslateService {
   private readonly logger = new Logger(TranslateService.name);
   private ollamaApiUrl: string;
-  private readonly model = 'qwen3:8b';
-  private readonly think = false;
+  // Dùng model nhỏ hơn để tăng tốc độ: qwen3:1.8b hoặc qwen3:4b
+  private readonly translateModel = 'qwen3:8b';
   private readonly stream = false;
-
+  private readonly think = false;
   constructor(
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
+    private readonly imageOcrService: ImageOcrService,
   ) {
     this.ollamaApiUrl =
       configService.get<string>('OLLAMA_API_URL') || 'http://localhost:11434';
@@ -45,37 +52,22 @@ export class TranslateService {
 YÊU CẦU:
 - CHỈ trả về bản dịch, không giải thích.
 - GIỮ NGUYÊN định dạng: xuống dòng, đoạn văn, danh sách.
+- Không dịch các từ chuyên ngành, các từ kỹ thuật.
 - Dịch tự nhiên, phù hợp văn hóa ${targetLanguage}.`;
   }
 
   /**
-   * Tính num_ctx tối ưu dựa trên độ dài prompt
-   * @param text User prompt
-   * @returns num_ctx phù hợp (min 512, max 4096)
-   */
-  private calculateNumCtx(text: string): number {
-    const wordCount = text.trim().split(/\s+/).filter(Boolean).length;
-    // Base 512 + 2 tokens/từ (ước tính), giới hạn 512-4096
-    return Math.min(Math.max(512 + wordCount * 2, 512), 4096);
-  }
-
-  /**
    * Gọi Ollama Chat API để dịch văn bản
-   * @param systemPrompt System prompt cho model
-   * @param userPrompt User prompt cần dịch
-   * @returns Response data từ Ollama API
    */
   private async callOllamaChatAPI(
     systemPrompt: string,
     userPrompt: string,
   ): Promise<OllamaChatResponse> {
-    const numCtx = this.calculateNumCtx(userPrompt);
-
     const response = await firstValueFrom(
       this.httpService.post<OllamaChatResponse>(
         `${this.ollamaApiUrl}/api/chat`,
         {
-          model: this.model,
+          model: this.translateModel,
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt.trim() },
@@ -84,12 +76,11 @@ YÊU CẦU:
           think: this.think,
           options: {
             temperature: 0.1,
-            num_ctx: numCtx,
+            num_ctx: 512, // Context nhỏ để nhanh hơn
           },
         },
         {
           headers: { 'Content-Type': 'application/json' },
-          timeout: 30000,
         },
       ),
     );
@@ -97,12 +88,10 @@ YÊU CẦU:
   }
 
   /**
-   * Xử lý lỗi từ Ollama API và throw HttpException phù hợp
-   * @param error Lỗi từ axios
-   * @param duration Thời gian đã xử lý (ms)
+   * Xử lý lỗi từ Ollama API
    */
   private handleOllamaError(error: any, duration: number): never {
-    this.logger.error(`Lỗi khi dịch văn bản sau ${duration}ms:`, error);
+    this.logger.error(`Lỗi sau ${duration}ms:`, error.message);
 
     if (error.response) {
       throw new HttpException(
@@ -118,9 +107,8 @@ YÊU CẦU:
     if (error.request) {
       throw new HttpException(
         {
-          message:
-            'Không thể kết nối đến Ollama API. Vui lòng kiểm tra Ollama đã chạy chưa.',
-          error: 'Connection timeout or Ollama service unavailable',
+          message: 'Không thể kết nối đến Ollama API',
+          error: 'Connection failed',
           statusCode: HttpStatus.SERVICE_UNAVAILABLE,
         },
         HttpStatus.SERVICE_UNAVAILABLE,
@@ -129,7 +117,7 @@ YÊU CẦU:
 
     throw new HttpException(
       {
-        message: 'Lỗi không xác định khi dịch văn bản',
+        message: 'Lỗi không xác định',
         error: error.message,
         statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
       },
@@ -138,23 +126,25 @@ YÊU CẦU:
   }
 
   /**
-   * Trích xuất translated text từ Ollama response
-   * @param response Response từ Ollama API
-   * @returns Translated text
+   * Trích xuất và clean translated text
    */
   private extractTranslatedText(response: OllamaChatResponse): string {
-    return (
+    let text =
       response.message?.content ||
-      (typeof response.message === 'string' ? response.message : '')
-    );
+      (typeof response.message === 'string' ? response.message : '');
+
+    // Loại bỏ các tag không mong muốn
+    text = text
+      .replace(/\s*\/no_think\s*/gi, ' ')
+      .replace(/\s*\/think\s*/gi, ' ')
+      .replace(/\s*<think>[\s\S]*?<\/think>\s*/gi, '')
+      .trim();
+
+    return text;
   }
 
   /**
-   * Dịch văn bản thông qua Ollama API
-   * Hỗ trợ dịch từ ngôn ngữ A sang ngôn ngữ B
-   * @param translateRequestDto Dữ liệu request chứa prompt, sourceLanguage và targetLanguage
-   * @returns Kết quả dịch thuật
-   * @throws HttpException Nếu có lỗi khi gọi Ollama API
+   * Dịch văn bản
    */
   async translate(
     translateRequestDto: TranslateRequestDto,
@@ -171,24 +161,126 @@ YÊU CẦU:
         sourceLanguage,
         targetLanguage,
       );
-
-      this.logger.log(
-        `Dịch từ ${sourceLanguage || 'tự phát hiện'} sang ${targetLanguage}`,
-      );
-
       const response = await this.callOllamaChatAPI(systemPrompt, prompt);
       const translatedText = this.extractTranslatedText(response);
       const duration = Date.now() - startTime;
 
-      this.logger.log(`Dịch thành công trong ${duration}ms`);
-
       return {
         translatedText,
-        model: response.model || this.model,
+        model: response.model || this.translateModel,
         duration,
       };
     } catch (error) {
       this.handleOllamaError(error, Date.now() - startTime);
     }
+  }
+
+  /**
+   * Dịch ảnh với OCR
+   * Flow: Tesseract.js detect text → Dịch text → Trả về với box coordinates
+   */
+  async translateImage(
+    imageBuffer: Buffer,
+    sourceLanguage?: string,
+    targetLanguage: string = 'Tiếng Việt',
+  ): Promise<ImageTranslateResponseDto> {
+    const startTime = Date.now();
+
+    try {
+      // OCR detect text
+      const ocrStartTime = Date.now();
+      const ocrResults =
+        await this.imageOcrService.detectTextBlocks(imageBuffer);
+      const ocrDuration = Date.now() - ocrStartTime;
+
+      this.logger.log(
+        `OCR: ${ocrResults.length} blocks trong ${ocrDuration}ms`,
+      );
+
+      if (ocrResults.length === 0) {
+        return {
+          blocks: [],
+          totalDuration: Date.now() - startTime,
+          ocrDuration,
+          translateDuration: 0,
+          translateModel: this.translateModel,
+        };
+      }
+
+      // Dịch song song tất cả blocks
+      const translateStartTime = Date.now();
+      const translatedBlocks = await this.translateBlocksParallel(
+        ocrResults,
+        sourceLanguage,
+        targetLanguage,
+      );
+      const translateDuration = Date.now() - translateStartTime;
+
+      const totalDuration = Date.now() - startTime;
+      this.logger.log(
+        `Hoàn thành: ${translatedBlocks.length} blocks trong ${totalDuration}ms`,
+      );
+
+      return {
+        blocks: translatedBlocks,
+        totalDuration,
+        ocrDuration,
+        translateDuration,
+        translateModel: this.translateModel,
+      };
+    } catch (error) {
+      this.handleOllamaError(error, Date.now() - startTime);
+    }
+  }
+
+  /**
+   * Dịch song song tất cả blocks để tối đa tốc độ
+   */
+  private async translateBlocksParallel(
+    ocrResults: OcrResult[],
+    sourceLanguage?: string,
+    targetLanguage: string = 'Tiếng Việt',
+  ): Promise<TranslatedBlock[]> {
+    const systemPrompt = this.buildSystemPrompt(sourceLanguage, targetLanguage);
+
+    // Dịch TẤT CẢ blocks cùng lúc
+    const promises = ocrResults.map(async (ocrResult) => {
+      const text = ocrResult.text?.trim();
+      if (!text) return null;
+
+      try {
+        const response = await this.callOllamaChatAPI(systemPrompt, text);
+        const translatedText = this.extractTranslatedText(response);
+
+        this.logger.debug(`Dịch: "${text}" → "${translatedText}"`);
+
+        return {
+          box: ocrResult.box,
+          originalText: text,
+          translatedText,
+          confidence: ocrResult.confidence,
+        };
+      } catch (error: any) {
+        // Log lỗi chi tiết để debug
+        this.logger.error(`Lỗi dịch "${text}": ${error.message}`);
+
+        // Trả về text gốc nếu dịch thất bại
+        return {
+          box: ocrResult.box,
+          originalText: text,
+          translatedText: text,
+          confidence: ocrResult.confidence,
+        };
+      }
+    });
+
+    const results = await Promise.allSettled(promises);
+
+    return results
+      .filter(
+        (r): r is PromiseFulfilledResult<TranslatedBlock | null> =>
+          r.status === 'fulfilled' && r.value !== null,
+      )
+      .map((r) => r.value as TranslatedBlock);
   }
 }

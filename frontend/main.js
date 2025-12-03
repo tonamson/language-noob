@@ -1,14 +1,23 @@
-const { app, BrowserWindow } = require("electron/main");
+const {
+  app,
+  BrowserWindow,
+  ipcMain,
+  screen,
+  nativeImage,
+  desktopCapturer,
+} = require("electron/main");
 const path = require("path");
 const { spawn, fork } = require("child_process");
 const http = require("http");
 const fs = require("fs");
+const { execSync } = require("child_process");
 
 const isDev = process.env.NODE_ENV === "development" || !app.isPackaged;
 let nextProcess = null;
 let apiProcess = null;
 let staticServer = null;
 let staticServerPort = 3456; // Port cho static server trong production
+let mainWindow = null; // Reference đến main window
 
 // Lấy đường dẫn đến config.json (có thể chỉnh sửa sau khi build)
 const getConfigPath = () => {
@@ -81,6 +90,24 @@ const getApiLink = () => {
 };
 
 const API_LINK = getApiLink();
+
+// Lấy port từ API_LINK
+const getApiPort = (apiLink) => {
+  try {
+    const url = new URL(apiLink);
+    if (url.hostname === "127.0.0.1" || url.hostname === "localhost") {
+      return url.port || "2053";
+    }
+  } catch (err) {
+    console.warn("Failed to parse API_LINK for port:", err.message);
+  }
+  return "2053"; // Default port
+};
+
+const isLocalApi =
+  API_LINK.startsWith("http://127.0.0.1") ||
+  API_LINK.startsWith("http://localhost");
+const API_PORT = getApiPort(API_LINK); // Parse port từ API_LINK
 
 // MIME types cho static files
 const MIME_TYPES = {
@@ -294,9 +321,67 @@ const waitForApi = (apiUrl, maxAttempts = 30, interval = 500) => {
   });
 };
 
+// Kill process trên port cụ thể
+const killProcessOnPort = (port) => {
+  try {
+    // macOS/Linux: sử dụng lsof để tìm process
+    if (process.platform === "darwin" || process.platform === "linux") {
+      const result = execSync(`lsof -ti:${port}`, { encoding: "utf-8" }).trim();
+      if (result) {
+        const pids = result.split("\n").filter((pid) => pid);
+        pids.forEach((pid) => {
+          try {
+            console.log(`Killing process ${pid} on port ${port}...`);
+            process.kill(parseInt(pid), "SIGKILL");
+          } catch (e) {
+            console.warn(`Failed to kill process ${pid}:`, e.message);
+          }
+        });
+        // Đợi một chút để process được kill
+        return new Promise((resolve) => setTimeout(resolve, 500));
+      }
+    } else if (process.platform === "win32") {
+      // Windows: sử dụng netstat và taskkill
+      try {
+        const result = execSync(`netstat -ano | findstr :${port}`, {
+          encoding: "utf-8",
+        });
+        const lines = result
+          .split("\n")
+          .filter((line) => line.includes("LISTENING"));
+        lines.forEach((line) => {
+          const parts = line.trim().split(/\s+/);
+          const pid = parts[parts.length - 1];
+          if (pid) {
+            try {
+              console.log(`Killing process ${pid} on port ${port}...`);
+              execSync(`taskkill /F /PID ${pid}`, { stdio: "ignore" });
+            } catch (e) {
+              console.warn(`Failed to kill process ${pid}:`, e.message);
+            }
+          }
+        });
+        return new Promise((resolve) => setTimeout(resolve, 500));
+      } catch (e) {
+        // Không có process nào trên port này
+        return Promise.resolve();
+      }
+    }
+    return Promise.resolve();
+  } catch (error) {
+    // Không có process nào trên port này hoặc lỗi
+    return Promise.resolve();
+  }
+};
+
 // Khởi động API server
 const startApiServer = () => {
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
+    // Kill process cũ trên port API trước
+    const apiPort = getApiPort(API_LINK);
+    console.log(`Checking for existing processes on port ${apiPort}...`);
+    await killProcessOnPort(apiPort);
+
     const apiPath = getApiPath();
     const apiMainFile = path.join(apiPath, "dist", "main.js");
 
@@ -309,18 +394,6 @@ const startApiServer = () => {
       return;
     }
 
-    // Parse port từ API_LINK nếu là localhost (để set PORT env)
-    // Nếu không phải localhost, API sẽ tự động setup port của nó
-    let apiPort = null;
-    try {
-      const url = new URL(API_LINK);
-      if (url.hostname === "127.0.0.1" || url.hostname === "localhost") {
-        apiPort = url.port || (url.protocol === "https:" ? 443 : 80);
-      }
-    } catch (err) {
-      console.warn("Failed to parse API_LINK:", err.message);
-    }
-
     // Spawn Node process để chạy API
     // API sẽ tự động đọc PORT từ environment variable hoặc dùng default
     const env = {
@@ -329,15 +402,20 @@ const startApiServer = () => {
     };
 
     // Chỉ set PORT nếu là localhost (API local)
-    if (apiPort) {
-      env.PORT = apiPort.toString();
+    if (isLocalApi) {
+      env.PORT = apiPort;
     }
 
     apiProcess = fork(apiMainFile, [], {
       cwd: apiPath,
       env,
       stdio: ["pipe", "pipe", "pipe", "ipc"],
+      detached: false, // Đảm bảo process con sẽ bị kill cùng với parent
     });
+
+    // Lưu PID để có thể kill sau này
+    const apiPid = apiProcess.pid;
+    console.log(`API server started with PID: ${apiPid}`);
 
     apiProcess.stdout.on("data", (data) => {
       console.log(`[API] ${data.toString().trim()}`);
@@ -352,8 +430,8 @@ const startApiServer = () => {
       reject(err);
     });
 
-    apiProcess.on("exit", (code) => {
-      console.log(`API server exited with code ${code}`);
+    apiProcess.on("exit", (code, signal) => {
+      console.log(`API server exited with code ${code}, signal ${signal}`);
       apiProcess = null;
     });
 
@@ -379,11 +457,20 @@ const startApiDev = () => {
       cwd: apiPath,
       shell: true,
       stdio: "inherit",
+      detached: false, // Đảm bảo process con sẽ bị kill cùng với parent
     });
+
+    const apiPid = apiProcess.pid;
+    console.log(`API dev server started with PID: ${apiPid}`);
 
     apiProcess.on("error", (err) => {
       console.error("Failed to start API dev server:", err);
       reject(err);
+    });
+
+    apiProcess.on("exit", (code, signal) => {
+      console.log(`API dev server exited with code ${code}, signal ${signal}`);
+      apiProcess = null;
     });
 
     // Đợi API server sẵn sàng
@@ -414,6 +501,9 @@ const createWindow = () => {
     },
   });
 
+  // Lưu reference đến main window
+  mainWindow = win;
+
   // Load URL dựa trên môi trường
   if (isDev) {
     // Development: Load từ Next.js dev server
@@ -430,6 +520,128 @@ const createWindow = () => {
     win.loadURL(serverUrl);
   }
 };
+
+// IPC Handlers cho screen capture
+ipcMain.handle("get-displays", async () => {
+  const displays = screen.getAllDisplays();
+  return displays.map((display, index) => ({
+    id: display.id,
+    index: index + 1,
+    bounds: display.bounds,
+    size: display.size,
+    scaleFactor: display.scaleFactor,
+    label: `Màn hình ${index + 1} (${display.size.width}x${
+      display.size.height
+    })`,
+  }));
+});
+
+// Screen capture variables (đơn giản - chụp toàn bộ màn hình)
+let screenCaptureInterval = null;
+let screenCaptureDisplayId = null;
+
+// Helper function để chụp toàn bộ màn hình
+const captureFullScreen = async (displayId) => {
+  try {
+    const displays = screen.getAllDisplays();
+    const targetDisplay =
+      displays.find((d) => d.id === displayId) || displays[0];
+
+    // Sử dụng desktopCapturer để capture screen
+    const sources = await desktopCapturer.getSources({
+      types: ["screen"],
+      thumbnailSize: {
+        width: targetDisplay.size.width,
+        height: targetDisplay.size.height,
+      },
+    });
+
+    // Tìm source tương ứng với display đã chọn
+    const source =
+      sources.find(
+        (s) =>
+          s.display_id === targetDisplay.id.toString() ||
+          s.display_id === targetDisplay.id ||
+          parseInt(s.display_id) === targetDisplay.id
+      ) || sources[0];
+
+    if (!source) {
+      throw new Error("Screen source not found");
+    }
+
+    // Lấy thumbnail (đã là hình ảnh toàn màn hình)
+    const imageData = source.thumbnail.toDataURL();
+
+    return { success: true, imageData, displayId };
+  } catch (error) {
+    console.error("Error capturing full screen:", error);
+    return { success: false, error: error.message };
+  }
+};
+
+// IPC handler để bắt đầu chụp màn hình
+ipcMain.handle(
+  "start-screen-capture",
+  async (event, displayId, interval = 500) => {
+    try {
+      // Dừng capture cũ nếu có
+      if (screenCaptureInterval) {
+        clearInterval(screenCaptureInterval);
+        screenCaptureInterval = null;
+      }
+
+      screenCaptureDisplayId = displayId;
+      console.log(
+        `Starting screen capture for display ${displayId} at ${interval}ms interval`
+      );
+
+      // Capture ngay lập tức
+      const captureResult = await captureFullScreen(displayId);
+      if (captureResult.success && captureResult.imageData && mainWindow) {
+        mainWindow.webContents.send("screen-capture-frame", {
+          imageData: captureResult.imageData,
+          displayId: displayId,
+        });
+      }
+
+      // Bắt đầu interval để capture liên tục
+      screenCaptureInterval = setInterval(async () => {
+        try {
+          const captureResult = await captureFullScreen(displayId);
+          if (captureResult.success && captureResult.imageData && mainWindow) {
+            mainWindow.webContents.send("screen-capture-frame", {
+              imageData: captureResult.imageData,
+              displayId: displayId,
+            });
+          }
+        } catch (error) {
+          console.error("Error capturing screen frame:", error);
+        }
+      }, interval);
+
+      return { success: true };
+    } catch (error) {
+      console.error("Error starting screen capture:", error);
+      return { success: false, error: error.message };
+    }
+  }
+);
+
+// IPC handler để dừng chụp màn hình
+ipcMain.handle("stop-screen-capture", async () => {
+  try {
+    if (screenCaptureInterval) {
+      clearInterval(screenCaptureInterval);
+      screenCaptureInterval = null;
+    }
+    screenCaptureDisplayId = null;
+    console.log("Screen capture stopped");
+    return { success: true };
+  } catch (error) {
+    console.error("Error stopping screen capture:", error);
+    return { success: false, error: error.message };
+  }
+});
 
 app.whenReady().then(async () => {
   try {
@@ -477,37 +689,190 @@ app.whenReady().then(async () => {
 });
 
 // Dừng tất cả processes
-const stopAllProcesses = () => {
+const stopAllProcesses = async (force = false) => {
+  console.log("Stopping all processes...");
+
   // Dừng Next.js dev server nếu đang chạy
   if (nextProcess) {
     console.log("Stopping Next.js dev server...");
-    nextProcess.kill();
+    try {
+      if (force) {
+        nextProcess.kill("SIGKILL");
+      } else {
+        nextProcess.kill("SIGTERM");
+        // Đợi một chút để process tự tắt, nếu không thì force kill
+        setTimeout(() => {
+          if (nextProcess && !nextProcess.killed) {
+            console.log("Force killing Next.js dev server...");
+            nextProcess.kill("SIGKILL");
+          }
+        }, 1000);
+      }
+    } catch (err) {
+      console.error("Error stopping Next.js dev server:", err);
+    }
     nextProcess = null;
   }
+
+  // Kill process trên port 3000 (Next.js dev server) để đảm bảo
+  console.log("Killing processes on port 3000 (Next.js)...");
+  await killProcessOnPort(3000);
 
   // Dừng API server nếu đang chạy
   if (apiProcess) {
     console.log("Stopping API server...");
-    apiProcess.kill();
-    apiProcess = null;
+    try {
+      const pid = apiProcess.pid;
+
+      if (force) {
+        // Force kill: dùng SIGKILL ngay lập tức
+        console.log(`Force killing API server (PID: ${pid})...`);
+        try {
+          apiProcess.kill("SIGKILL");
+        } catch (e) {
+          // Nếu kill() không work, thử kill bằng process ID
+          if (pid) {
+            try {
+              process.kill(pid, "SIGKILL");
+            } catch (e2) {
+              console.error("Failed to kill API process:", e2);
+            }
+          }
+        }
+        // Kill process trên port để đảm bảo
+        const apiPort = getApiPort(API_LINK);
+        await killProcessOnPort(apiPort);
+      } else {
+        // Graceful shutdown: gửi SIGTERM trước
+        console.log(`Sending SIGTERM to API server (PID: ${pid})...`);
+        try {
+          apiProcess.kill("SIGTERM");
+        } catch (e) {
+          if (pid) {
+            try {
+              process.kill(pid, "SIGTERM");
+            } catch (e2) {
+              console.error("Failed to send SIGTERM:", e2);
+            }
+          }
+        }
+
+        // Đợi một chút để process tự tắt, nếu không thì force kill
+        setTimeout(async () => {
+          if (apiProcess && !apiProcess.killed && pid) {
+            console.log(`Force killing API server (PID: ${pid})...`);
+            try {
+              apiProcess.kill("SIGKILL");
+            } catch (e) {
+              try {
+                process.kill(pid, "SIGKILL");
+              } catch (e2) {
+                console.error("Failed to force kill API process:", e2);
+              }
+            }
+            // Kill process trên port để đảm bảo
+            const apiPort = getApiPort(API_LINK);
+            await killProcessOnPort(apiPort);
+          }
+        }, 2000); // Tăng timeout lên 2 giây
+      }
+
+      // Đợi một chút để đảm bảo process đã tắt
+      setTimeout(() => {
+        apiProcess = null;
+      }, 100);
+    } catch (err) {
+      console.error("Error stopping API server:", err);
+      apiProcess = null;
+    }
+  } else {
+    // Nếu không có apiProcess reference, vẫn thử kill process trên port
+    console.log("No API process reference, killing process on port...");
+    const apiPort = getApiPort(API_LINK);
+    await killProcessOnPort(apiPort);
   }
+
+  // Luôn kill process trên port API để đảm bảo (dù có reference hay không)
+  const apiPort = getApiPort(API_LINK);
+  console.log(`Killing processes on port ${apiPort} (API server)...`);
+  await killProcessOnPort(apiPort);
 
   // Dừng static server nếu đang chạy
   if (staticServer) {
     console.log("Stopping static server...");
-    staticServer.close();
+    try {
+      staticServer.close();
+    } catch (err) {
+      console.error("Error stopping static server:", err);
+    }
     staticServer = null;
+  }
+
+  // Kill process trên port static server để đảm bảo
+  console.log(
+    `Killing processes on port ${staticServerPort} (Static server)...`
+  );
+  await killProcessOnPort(staticServerPort);
+
+  console.log("All processes stopped.");
+};
+
+// Đóng selection window nếu đang mở
+const closeSelectionWindow = () => {
+  if (selectionWindow) {
+    console.log("Closing selection window...");
+    try {
+      selectionWindow.close();
+    } catch (err) {
+      console.error("Error closing selection window:", err);
+    }
+    selectionWindow = null;
   }
 };
 
-app.on("window-all-closed", () => {
+app.on("window-all-closed", (event) => {
+  // Đóng selection window trước
+  closeSelectionWindow();
+
+  // Dừng tất cả processes
   stopAllProcesses();
 
   if (process.platform !== "darwin") {
     app.quit();
+  } else {
+    // Trên macOS, vẫn quit app khi đóng window
+    app.quit();
   }
 });
 
-app.on("before-quit", () => {
+app.on("before-quit", (event) => {
+  console.log("App is about to quit, stopping all processes...");
+  closeSelectionWindow();
   stopAllProcesses();
+});
+
+app.on("will-quit", (event) => {
+  console.log("App will quit, force stopping all processes...");
+  closeSelectionWindow();
+  stopAllProcesses(true); // Force kill
+});
+
+// Xử lý khi app bị terminate đột ngột
+process.on("SIGINT", async () => {
+  console.log("Received SIGINT, stopping all processes...");
+  await stopAllProcesses(true);
+  app.quit();
+});
+
+process.on("SIGTERM", async () => {
+  console.log("Received SIGTERM, stopping all processes...");
+  await stopAllProcesses(true);
+  app.quit();
+});
+
+// Xử lý uncaught exceptions
+process.on("uncaughtException", async (error) => {
+  console.error("Uncaught exception:", error);
+  await stopAllProcesses(true);
+  app.quit();
 });

@@ -11,11 +11,13 @@
     "start": "next start",
     "dev:electron": "NODE_ENV=development electron .",
     "start:electron": "electron .",
-    "build:electron": "yarn build && electron-builder",
-    "build:win": "yarn build && electron-builder --win",
-    "build:mac": "yarn build && electron-builder --mac",
-    "build:linux": "yarn build && electron-builder --linux",
-    "build:all": "yarn build && electron-builder --win --mac --linux",
+    "build:api": "cd ../api && npm run build",
+    "build:all-code": "npm run build:api && npm run build",
+    "build:electron": "npm run build:all-code && electron-builder",
+    "build:win": "npm run build:all-code && electron-builder --win",
+    "build:mac": "npm run build:all-code && electron-builder --mac",
+    "build:linux": "npm run build:all-code && electron-builder --linux",
+    "build:platforms": "npm run build:all-code && electron-builder --win --mac --linux",
     "lint": "eslint"
   },
   "build": {
@@ -29,6 +31,22 @@
       "main.js",
       "package.json",
       "node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../api/dist",
+        "to": "api/dist",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "../api/node_modules",
+        "to": "api/node_modules",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "../api/package.json",
+        "to": "api/package.json"
+      }
     ],
     "asar": true,
     "asarUnpack": [

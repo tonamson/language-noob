@@ -339,10 +339,62 @@ npm run lint         # Lint code
 
 ```bash
 npm run dev          # Development server
-npm run build        # Build production
+npm run build        # Build production (Next.js)
 npm run start        # Chạy production
 npm run lint         # Lint code
 ```
+
+### Electron (Desktop App)
+
+```bash
+# Development - chạy với hot reload
+npm run dev:electron
+
+# Build production app
+npm run build:electron   # Build cho platform hiện tại
+npm run build:mac        # Build cho macOS
+npm run build:win        # Build cho Windows
+npm run build:linux      # Build cho Linux
+npm run build:platforms  # Build cho tất cả platforms
+```
+
+**Lưu ý**: 
+- Build Electron sẽ tự động build cả API và Frontend
+- API được tích hợp vào app, không cần chạy riêng
+- App đã build nằm trong thư mục `frontend/release/`
+
+## 🖥️ Desktop App (Electron)
+
+### Cách hoạt động
+
+Khi build và chạy Electron app:
+1. App tự động khởi động **API server** (port 2053)
+2. App khởi động **Static server** để serve frontend (port 3456)
+3. Cửa sổ Electron load frontend từ static server
+4. Frontend gọi API thông qua `http://localhost:2053`
+
+### Cấu trúc sau khi build
+
+```
+Language Noob.app/
+├── Contents/
+│   ├── MacOS/
+│   │   └── Language Noob    # Executable
+│   └── Resources/
+│       ├── app.asar         # Frontend code
+│       ├── app.asar.unpacked/
+│       │   └── dist/        # Frontend static files
+│       └── api/             # API server
+│           ├── dist/        # API compiled code
+│           ├── node_modules/
+│           └── package.json
+```
+
+### Yêu cầu khi chạy app
+
+- **Ollama phải đang chạy** trên máy tính
+- Model `qwen3:8b` phải đã được tải
+- Không cần chạy API hay Frontend riêng
 
 ## 📄 License
 

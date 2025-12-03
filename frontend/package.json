@@ -29,6 +29,8 @@
     "files": [
       "dist/**/*",
       "main.js",
+      "preload.js",
+      "config.json",
       "package.json",
       "node_modules/**/*"
     ],
@@ -36,16 +38,24 @@
       {
         "from": "../api/dist",
         "to": "api/dist",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       },
       {
         "from": "../api/node_modules",
         "to": "api/node_modules",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       },
       {
         "from": "../api/package.json",
         "to": "api/package.json"
+      },
+      {
+        "from": "config.json",
+        "to": "config.json"
       }
     ],
     "asar": true,

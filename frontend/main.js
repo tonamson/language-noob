@@ -9,7 +9,78 @@ let nextProcess = null;
 let apiProcess = null;
 let staticServer = null;
 let staticServerPort = 3456; // Port cho static server trong production
-const API_PORT = 2053; // Port cho API server
+
+// Lấy đường dẫn đến config.json (có thể chỉnh sửa sau khi build)
+const getConfigPath = () => {
+  if (app.isPackaged) {
+    // Production: Tìm config.json ở các vị trí có thể chỉnh sửa được
+    // 1. Thư mục Resources (extraResources)
+    const resourcesPath = process.resourcesPath;
+    const resourcesConfigPath = path.join(resourcesPath, "config.json");
+    if (fs.existsSync(resourcesConfigPath)) {
+      return resourcesConfigPath;
+    }
+
+    // 2. Thư mục app.asar.unpacked
+    const appPath = app.getAppPath();
+    const unpackedConfigPath = path.join(
+      appPath,
+      "..",
+      "app.asar.unpacked",
+      "config.json"
+    );
+    if (fs.existsSync(unpackedConfigPath)) {
+      return unpackedConfigPath;
+    }
+
+    // 3. Cùng thư mục với executable (user có thể chỉnh sửa ở đây)
+    const execDir = path.dirname(process.execPath);
+    const execConfigPath = path.join(execDir, "config.json");
+    if (fs.existsSync(execConfigPath)) {
+      return execConfigPath;
+    }
+
+    // Fallback về resources
+    return resourcesConfigPath;
+  }
+
+  // Development: Trong thư mục frontend
+  return path.join(__dirname, "config.json");
+};
+
+// Đọc API_LINK từ config hoặc environment variable
+const getApiLink = () => {
+  // Ưu tiên environment variable (dùng khi build cross-platform)
+  if (process.env.API_LINK) {
+    console.log("Using API_LINK from environment:", process.env.API_LINK);
+    return process.env.API_LINK;
+  }
+
+  // Đọc từ config.json (có thể chỉnh sửa sau khi build)
+  const configPath = getConfigPath();
+  console.log("Looking for config.json at:", configPath);
+
+  if (fs.existsSync(configPath)) {
+    try {
+      const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+      if (config.apiLink) {
+        console.log("Using API_LINK from config.json:", config.apiLink);
+        return config.apiLink;
+      }
+    } catch (err) {
+      console.warn("Failed to read config.json:", err.message);
+    }
+  } else {
+    console.log("config.json not found, using default API link");
+  }
+
+  // Mặc định: localhost với port mặc định (2053 - port của API build)
+  const defaultApiLink = "http://127.0.0.1:2053";
+  console.log("Using default API_LINK:", defaultApiLink);
+  return defaultApiLink;
+};
+
+const API_LINK = getApiLink();
 
 // MIME types cho static files
 const MIME_TYPES = {
@@ -188,14 +259,14 @@ const getApiPath = () => {
 };
 
 // Kiểm tra API server đã sẵn sàng chưa
-const waitForApi = (port, maxAttempts = 30, interval = 500) => {
+const waitForApi = (apiUrl, maxAttempts = 30, interval = 500) => {
   return new Promise((resolve, reject) => {
     let attempts = 0;
 
     const checkApi = () => {
       attempts++;
 
-      const req = http.get(`http://127.0.0.1:${port}`, (res) => {
+      const req = http.get(apiUrl, (res) => {
         resolve(true);
       });
 
@@ -238,14 +309,33 @@ const startApiServer = () => {
       return;
     }
 
+    // Parse port từ API_LINK nếu là localhost (để set PORT env)
+    // Nếu không phải localhost, API sẽ tự động setup port của nó
+    let apiPort = null;
+    try {
+      const url = new URL(API_LINK);
+      if (url.hostname === "127.0.0.1" || url.hostname === "localhost") {
+        apiPort = url.port || (url.protocol === "https:" ? 443 : 80);
+      }
+    } catch (err) {
+      console.warn("Failed to parse API_LINK:", err.message);
+    }
+
     // Spawn Node process để chạy API
+    // API sẽ tự động đọc PORT từ environment variable hoặc dùng default
+    const env = {
+      ...process.env,
+      NODE_ENV: "production",
+    };
+
+    // Chỉ set PORT nếu là localhost (API local)
+    if (apiPort) {
+      env.PORT = apiPort.toString();
+    }
+
     apiProcess = fork(apiMainFile, [], {
       cwd: apiPath,
-      env: {
-        ...process.env,
-        NODE_ENV: "production",
-        PORT: API_PORT.toString(),
-      },
+      env,
       stdio: ["pipe", "pipe", "pipe", "ipc"],
     });
 
@@ -268,11 +358,11 @@ const startApiServer = () => {
     });
 
     // Đợi API server sẵn sàng
-    console.log(`Waiting for API server on port ${API_PORT}...`);
-    waitForApi(API_PORT)
+    console.log(`Waiting for API server at ${API_LINK}...`);
+    waitForApi(API_LINK)
       .then(() => {
-        console.log(`✅ API server is ready at http://127.0.0.1:${API_PORT}`);
-        resolve(API_PORT);
+        console.log(`✅ API server is ready at ${API_LINK}`);
+        resolve(API_LINK);
       })
       .catch(reject);
   });
@@ -298,12 +388,10 @@ const startApiDev = () => {
 
     // Đợi API server sẵn sàng
     setTimeout(() => {
-      waitForApi(API_PORT)
+      waitForApi(API_LINK)
         .then(() => {
-          console.log(
-            `✅ API dev server is ready at http://127.0.0.1:${API_PORT}`
-          );
-          resolve(API_PORT);
+          console.log(`✅ API dev server is ready at ${API_LINK}`);
+          resolve(API_LINK);
         })
         .catch(reject);
     }, 2000);
@@ -311,6 +399,9 @@ const startApiDev = () => {
 };
 
 const createWindow = () => {
+  // Set environment variable cho preload script
+  process.env.API_URL = API_LINK;
+
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -318,6 +409,8 @@ const createWindow = () => {
       nodeIntegration: false,
       contextIsolation: true,
       webSecurity: true,
+      // Preload script để inject API URL vào window
+      preload: path.join(__dirname, "preload.js"),
     },
   });
 
@@ -333,6 +426,7 @@ const createWindow = () => {
     // Static server đã được khởi động trước khi tạo window
     const serverUrl = `http://127.0.0.1:${staticServerPort}`;
     console.log("Loading from static server:", serverUrl);
+    console.log("API URL configured:", API_LINK);
     win.loadURL(serverUrl);
   }
 };

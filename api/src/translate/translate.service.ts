@@ -2,7 +2,6 @@ import { Injectable, HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { TranslateRequestDto } from './dto/translate-request.dto';
-import { TranslateReverseRequestDto } from './dto/translate-reverse-request.dto';
 import {
   TranslateResponseDto,
   OllamaChatResponse,

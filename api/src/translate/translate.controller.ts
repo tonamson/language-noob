@@ -1,7 +1,6 @@
 import { Controller, Post, Body, HttpCode, HttpStatus } from '@nestjs/common';
 import { TranslateService } from './translate.service';
 import { TranslateRequestDto } from './dto/translate-request.dto';
-import { TranslateReverseRequestDto } from './dto/translate-reverse-request.dto';
 import { TranslateResponseDto } from './dto/translate-response.dto';
 
 /**

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import {
   TranslateService,
@@ -53,6 +53,12 @@ export default function ChatPage() {
   const [targetLanguage, setTargetLanguage] = useState<string>("English");
   const [isLoading, setIsLoading] = useState(false);
   const [typingMessageId, setTypingMessageId] = useState<number | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Auto scroll xuống message mới nhất khi có message mới
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
 
   const handleSend = async () => {
     if (!inputText.trim() || isLoading) return;
@@ -142,9 +148,9 @@ export default function ChatPage() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col bg-zinc-50 dark:bg-black">
+    <div className="flex h-screen flex-col bg-zinc-50 dark:bg-black overflow-hidden">
       {/* Header */}
-      <header className="border-b border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+      <header className="flex-shrink-0 border-b border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
         <div className="mx-auto flex max-w-4xl items-center justify-between px-4 py-4 sm:px-6">
           <Link
             href="/"
@@ -173,7 +179,7 @@ export default function ChatPage() {
       </header>
 
       {/* Chat Messages */}
-      <main className="flex flex-1 flex-col overflow-hidden">
+      <main className="flex flex-1 flex-col overflow-hidden min-h-0">
         <div className="flex-1 overflow-y-auto px-4 py-6 sm:px-6">
           <div className="mx-auto max-w-3xl space-y-4">
             {messages.length === 0 ? (
@@ -202,38 +208,44 @@ export default function ChatPage() {
                 </div>
               </div>
             ) : (
-              messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={`flex ${
-                    message.sender === "user" ? "justify-end" : "justify-start"
-                  }`}
-                >
+              <>
+                {messages.map((message) => (
                   <div
-                    className={`max-w-[80%] rounded-2xl ${
+                    key={message.id}
+                    className={`flex ${
                       message.sender === "user"
-                        ? "bg-blue-600 text-white px-4 py-3"
-                        : message.isTyping
-                        ? "bg-white dark:bg-zinc-800"
-                        : "bg-white text-black px-4 py-3 dark:bg-zinc-800 dark:text-zinc-50"
+                        ? "justify-end"
+                        : "justify-start"
                     }`}
                   >
-                    {message.isTyping ? (
-                      <TypingIndicator />
-                    ) : (
-                      <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                        {message.text}
-                      </p>
-                    )}
+                    <div
+                      className={`max-w-[80%] rounded-2xl ${
+                        message.sender === "user"
+                          ? "bg-blue-600 text-white px-4 py-3"
+                          : message.isTyping
+                          ? "bg-white dark:bg-zinc-800"
+                          : "bg-white text-black px-4 py-3 dark:bg-zinc-800 dark:text-zinc-50"
+                      }`}
+                    >
+                      {message.isTyping ? (
+                        <TypingIndicator />
+                      ) : (
+                        <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                          {message.text}
+                        </p>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))
+                ))}
+                {/* Invisible div để scroll vào */}
+                <div ref={messagesEndRef} />
+              </>
             )}
           </div>
         </div>
 
         {/* Input Area */}
-        <div className="border-t border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="flex-shrink-0 border-t border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
           <div className="mx-auto max-w-3xl px-4 py-4 sm:px-6">
             {/* Translate Mode Selection */}
             <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

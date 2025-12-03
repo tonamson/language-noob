@@ -6,7 +6,8 @@ const nextConfig: NextConfig = {
   images: {
     unoptimized: true,
   },
-  assetPrefix: "./",
+  // Không cần assetPrefix vì đã dùng local HTTP server
+  // assetPrefix: "./",
 };
 
 export default nextConfig;

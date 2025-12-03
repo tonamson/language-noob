@@ -1,9 +1,141 @@
 const { app, BrowserWindow } = require("electron/main");
 const path = require("path");
 const { spawn } = require("child_process");
+const http = require("http");
+const fs = require("fs");
 
 const isDev = process.env.NODE_ENV === "development" || !app.isPackaged;
 let nextProcess = null;
+let staticServer = null;
+let staticServerPort = 3456; // Port cho static server trong production
+
+// MIME types cho static files
+const MIME_TYPES = {
+  ".html": "text/html",
+  ".js": "application/javascript",
+  ".css": "text/css",
+  ".json": "application/json",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".ttf": "font/ttf",
+  ".eot": "application/vnd.ms-fontobject",
+  ".txt": "text/plain",
+};
+
+// Lấy dist path
+const getDistPath = () => {
+  if (app.isPackaged) {
+    const appPath = app.getAppPath();
+    const unpackedDistPath = path.join(
+      appPath,
+      "..",
+      "app.asar.unpacked",
+      "dist"
+    );
+    const asarDistPath = path.join(appPath, "dist");
+    const resourcesPath =
+      process.resourcesPath ||
+      path.join(path.dirname(process.execPath), "..", "Resources");
+    const resourcesDistPath = path.join(resourcesPath, "dist");
+
+    if (fs.existsSync(unpackedDistPath)) {
+      return unpackedDistPath;
+    } else if (fs.existsSync(asarDistPath)) {
+      return asarDistPath;
+    } else if (fs.existsSync(resourcesDistPath)) {
+      return resourcesDistPath;
+    }
+    return asarDistPath;
+  }
+  return path.join(__dirname, "dist");
+};
+
+// Khởi động static HTTP server cho production
+const startStaticServer = () => {
+  return new Promise((resolve, reject) => {
+    const distPath = getDistPath();
+    console.log("Static server serving from:", distPath);
+
+    staticServer = http.createServer((req, res) => {
+      let urlPath = req.url.split("?")[0]; // Loại bỏ query string
+
+      // Xử lý routing - nếu không có extension, thử load HTML file
+      let filePath;
+      if (urlPath === "/" || urlPath === "") {
+        filePath = path.join(distPath, "index.html");
+      } else if (path.extname(urlPath) === "") {
+        // Không có extension -> thử load .html file hoặc folder/index.html
+        const htmlPath = path.join(distPath, urlPath + ".html");
+        const indexPath = path.join(distPath, urlPath, "index.html");
+
+        if (fs.existsSync(htmlPath)) {
+          filePath = htmlPath;
+        } else if (fs.existsSync(indexPath)) {
+          filePath = indexPath;
+        } else {
+          filePath = path.join(distPath, urlPath);
+        }
+      } else {
+        filePath = path.join(distPath, urlPath);
+      }
+
+      // Kiểm tra file tồn tại
+      fs.stat(filePath, (err, stats) => {
+        if (err || !stats.isFile()) {
+          // Fallback về index.html cho SPA routing
+          const indexPath = path.join(distPath, "index.html");
+          fs.readFile(indexPath, (err2, data) => {
+            if (err2) {
+              res.writeHead(404);
+              res.end("Not Found");
+              return;
+            }
+            res.writeHead(200, { "Content-Type": "text/html" });
+            res.end(data);
+          });
+          return;
+        }
+
+        // Đọc và serve file
+        const ext = path.extname(filePath).toLowerCase();
+        const mimeType = MIME_TYPES[ext] || "application/octet-stream";
+
+        fs.readFile(filePath, (err, data) => {
+          if (err) {
+            res.writeHead(500);
+            res.end("Server Error");
+            return;
+          }
+          res.writeHead(200, { "Content-Type": mimeType });
+          res.end(data);
+        });
+      });
+    });
+
+    staticServer.listen(staticServerPort, "127.0.0.1", () => {
+      console.log(
+        `Static server running at http://127.0.0.1:${staticServerPort}`
+      );
+      resolve(staticServerPort);
+    });
+
+    staticServer.on("error", (err) => {
+      if (err.code === "EADDRINUSE") {
+        // Port đang được sử dụng, thử port khác
+        staticServerPort++;
+        staticServer.listen(staticServerPort, "127.0.0.1");
+      } else {
+        reject(err);
+      }
+    });
+  });
+};
 
 // Khởi động Next.js dev server nếu ở development mode
 const startNextDev = () => {
@@ -39,191 +171,32 @@ const createWindow = () => {
     // Mở DevTools trong development
     win.webContents.openDevTools();
   } else {
-    // Production: Load từ static export
-    // Khi packaged, dist có thể ở trong app.asar hoặc Resources folder
-    const fs = require("fs");
-    let indexPath;
-
-    if (app.isPackaged) {
-      // Khi packaged với asarUnpack, dist sẽ ở app.asar.unpacked/dist
-      const appPath = app.getAppPath();
-
-      // Thử các path có thể:
-      // 1. app.asar.unpacked/dist (nếu asarUnpack)
-      const unpackedPath = path.join(
-        appPath,
-        "..",
-        "app.asar.unpacked",
-        "dist",
-        "index.html"
-      );
-      // 2. app.asar/dist (nếu trong asar)
-      const asarPath = path.join(appPath, "dist", "index.html");
-      // 3. Resources/dist (nếu extraResources)
-      const resourcesPath =
-        process.resourcesPath ||
-        path.join(path.dirname(process.execPath), "..", "Resources");
-      const resourcesIndexPath = path.join(resourcesPath, "dist", "index.html");
-
-      // Kiểm tra file nào tồn tại
-      if (fs.existsSync(unpackedPath)) {
-        indexPath = unpackedPath;
-      } else if (fs.existsSync(asarPath)) {
-        indexPath = asarPath;
-      } else if (fs.existsSync(resourcesIndexPath)) {
-        indexPath = resourcesIndexPath;
-      } else {
-        // Fallback: dùng asarPath
-        indexPath = asarPath;
-        console.warn("Cannot find dist/index.html, trying:", indexPath);
-      }
-    } else {
-      // Development build (không packaged)
-      indexPath = path.join(__dirname, "dist", "index.html");
-    }
-
-    console.log("Loading index.html from:", indexPath);
-    win.loadFile(indexPath).catch((err) => {
-      console.error("Failed to load index.html:", err);
-    });
-  }
-
-  // Xử lý navigation cho static export
-  if (!isDev) {
-    // Helper function để lấy dist path
-    const getDistPath = () => {
-      const fs = require("fs");
-
-      if (app.isPackaged) {
-        const appPath = app.getAppPath();
-
-        // Thử các path có thể:
-        // 1. app.asar.unpacked/dist (nếu asarUnpack)
-        const unpackedDistPath = path.join(
-          appPath,
-          "..",
-          "app.asar.unpacked",
-          "dist"
-        );
-        // 2. app.asar/dist (nếu trong asar)
-        const asarDistPath = path.join(appPath, "dist");
-        // 3. Resources/dist (nếu extraResources)
-        const resourcesPath =
-          process.resourcesPath ||
-          path.join(path.dirname(process.execPath), "..", "Resources");
-        const resourcesDistPath = path.join(resourcesPath, "dist");
-
-        // Kiểm tra path nào tồn tại
-        if (fs.existsSync(unpackedDistPath)) {
-          return unpackedDistPath;
-        } else if (fs.existsSync(asarDistPath)) {
-          return asarDistPath;
-        } else if (fs.existsSync(resourcesDistPath)) {
-          return resourcesDistPath;
-        } else {
-          return asarDistPath; // Fallback
-        }
-      } else {
-        return path.join(__dirname, "dist");
-      }
-    };
-
-    const distPath = getDistPath();
-
-    // Helper function để convert route path sang file path
-    const routeToFilePath = (routePath) => {
-      // Loại bỏ leading và trailing slash
-      routePath = routePath.replace(/^\/+|\/+$/g, "");
-
-      if (!routePath || routePath === "") {
-        return path.join(distPath, "index.html");
-      }
-
-      // Nếu đã có .html extension, load trực tiếp
-      if (routePath.endsWith(".html")) {
-        return path.join(distPath, routePath);
-      }
-
-      // Thêm /index.html cho route (Next.js với trailingSlash: true)
-      return path.join(distPath, routePath, "index.html");
-    };
-
-    // Intercept navigation để xử lý routing đúng cách
-    win.webContents.on("will-navigate", (event, navigationUrl) => {
-      const parsedUrl = new URL(navigationUrl);
-
-      if (parsedUrl.protocol === "file:") {
-        event.preventDefault();
-
-        let routePath = parsedUrl.pathname;
-
-        // Xử lý path dựa trên OS
-        if (process.platform === "win32") {
-          // Windows: file:///C:/path/to/dist/chat/ -> chat/
-          // Loại bỏ drive letter và path đến dist
-          const urlPath = routePath.replace(/^\/+/, "").replace(/\\/g, "/");
-          const distPathNormalized = distPath.replace(/\\/g, "/");
-
-          if (urlPath.includes("dist")) {
-            routePath = urlPath.substring(urlPath.indexOf("dist") + 5);
-          } else if (urlPath.includes(distPathNormalized)) {
-            routePath = urlPath.substring(
-              urlPath.indexOf(distPathNormalized) + distPathNormalized.length
-            );
-          } else {
-            // Nếu không có dist trong path, thử parse từ absolute path
-            const parts = urlPath.split("/");
-            const distIndex = parts.indexOf("dist");
-            if (distIndex !== -1 && distIndex < parts.length - 1) {
-              routePath = parts.slice(distIndex + 1).join("/");
-            }
-          }
-        } else {
-          // Unix/Mac: file:///path/to/dist/chat/ -> chat/
-          if (routePath.includes(distPath)) {
-            routePath = routePath.substring(
-              routePath.indexOf(distPath) + distPath.length
-            );
-          }
-          // Loại bỏ leading slash
-          routePath = routePath.replace(/^\/+/, "");
-        }
-
-        const htmlPath = routeToFilePath(routePath);
-
-        // Load file
-        win.loadFile(htmlPath).catch((err) => {
-          console.error("Failed to load file:", htmlPath, err);
-          // Fallback về index.html nếu route không tồn tại
-          win.loadFile(path.join(distPath, "index.html"));
-        });
-      }
-    });
-
-    // Xử lý failed load (404) - fallback về index.html
-    win.webContents.on(
-      "did-fail-load",
-      (event, errorCode, errorDescription, validatedURL) => {
-        if (errorCode === -6) {
-          // ERR_FILE_NOT_FOUND - thử load index.html
-          console.log("File not found:", validatedURL);
-          win.loadFile(path.join(distPath, "index.html"));
-        }
-      }
-    );
+    // Production: Load từ local HTTP server
+    // Static server đã được khởi động trước khi tạo window
+    const serverUrl = `http://127.0.0.1:${staticServerPort}`;
+    console.log("Loading from static server:", serverUrl);
+    win.loadURL(serverUrl);
   }
 };
 
-app.whenReady().then(() => {
-  // Khởi động Next.js dev server nếu cần
+app.whenReady().then(async () => {
+  // Khởi động server tương ứng với môi trường
   if (isDev) {
+    // Development: Khởi động Next.js dev server
     startNextDev();
     // Đợi một chút để server khởi động
     setTimeout(() => {
       createWindow();
     }, 3000);
   } else {
-    createWindow();
+    // Production: Khởi động static HTTP server
+    try {
+      await startStaticServer();
+      createWindow();
+    } catch (err) {
+      console.error("Failed to start static server:", err);
+      app.quit();
+    }
   }
 
   app.on("activate", () => {
@@ -239,6 +212,11 @@ app.on("window-all-closed", () => {
     nextProcess.kill();
   }
 
+  // Dừng static server nếu đang chạy
+  if (staticServer) {
+    staticServer.close();
+  }
+
   if (process.platform !== "darwin") {
     app.quit();
   }
@@ -248,5 +226,10 @@ app.on("before-quit", () => {
   // Dừng Next.js dev server khi app đóng
   if (nextProcess) {
     nextProcess.kill();
+  }
+
+  // Dừng static server khi app đóng
+  if (staticServer) {
+    staticServer.close();
   }
 });

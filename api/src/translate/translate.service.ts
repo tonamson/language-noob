@@ -6,6 +6,7 @@ import {
   TranslateResponseDto,
   OllamaChatResponse,
 } from './dto/translate-response.dto';
+import { ConfigService } from '@nestjs/config';
 
 /**
  * Service xử lý logic dịch thuật thông qua Ollama API
@@ -13,13 +14,18 @@ import {
 @Injectable()
 export class TranslateService {
   private readonly logger = new Logger(TranslateService.name);
-  private readonly ollamaApiUrl =
-    process.env.OLLAMA_API_URL || 'http://localhost:11434';
+  private ollamaApiUrl: string;
   private readonly model = 'qwen3:8b';
   private readonly think = false;
   private readonly stream = false;
 
-  constructor(private readonly httpService: HttpService) {}
+  constructor(
+    private readonly httpService: HttpService,
+    private readonly configService: ConfigService,
+  ) {
+    this.ollamaApiUrl =
+      configService.get<string>('OLLAMA_API_URL') || 'http://localhost:11434';
+  }
 
   /**
    * Tạo prompt system message dựa trên source và target language

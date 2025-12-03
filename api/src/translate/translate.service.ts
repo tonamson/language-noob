@@ -234,53 +234,148 @@ YÊU CẦU:
   }
 
   /**
-   * Dịch song song tất cả blocks để tối đa tốc độ
+   * Dịch theo batch để tối ưu tốc độ
+   * Chia thành các batch nhỏ, mỗi batch dịch qua 1 request JSON
    */
   private async translateBlocksParallel(
     ocrResults: OcrResult[],
     sourceLanguage?: string,
     targetLanguage: string = 'Tiếng Việt',
   ): Promise<TranslatedBlock[]> {
-    const systemPrompt = this.buildSystemPrompt(sourceLanguage, targetLanguage);
+    const BATCH_SIZE = 20; // Số items mỗi batch
+    const batches: OcrResult[][] = [];
 
-    // Dịch TẤT CẢ blocks cùng lúc
-    const promises = ocrResults.map(async (ocrResult) => {
+    // Chia thành các batches
+    for (let i = 0; i < ocrResults.length; i += BATCH_SIZE) {
+      batches.push(ocrResults.slice(i, i + BATCH_SIZE));
+    }
+
+    this.logger.log(
+      `Chia ${ocrResults.length} blocks thành ${batches.length} batches`,
+    );
+
+    // Xử lý song song các batches
+    const batchPromises = batches.map((batch, batchIndex) =>
+      this.translateBatch(batch, batchIndex, sourceLanguage, targetLanguage),
+    );
+
+    const batchResults = await Promise.allSettled(batchPromises);
+
+    // Gom kết quả từ tất cả batches
+    const allResults: TranslatedBlock[] = [];
+    for (const result of batchResults) {
+      if (result.status === 'fulfilled') {
+        allResults.push(...result.value);
+      }
+    }
+
+    return allResults;
+  }
+
+  /**
+   * Dịch 1 batch sử dụng JSON format
+   */
+  private async translateBatch(
+    batch: OcrResult[],
+    batchIndex: number,
+    sourceLanguage?: string,
+    targetLanguage: string = 'Tiếng Việt',
+  ): Promise<TranslatedBlock[]> {
+    // Tạo JSON input với index làm key
+    const inputJson: Record<string, string> = {};
+    const validItems: { index: number; ocrResult: OcrResult }[] = [];
+
+    batch.forEach((ocrResult, idx) => {
       const text = ocrResult.text?.trim();
-      if (!text) return null;
-
-      try {
-        const response = await this.callOllamaChatAPI(systemPrompt, text);
-        const translatedText = this.extractTranslatedText(response);
-
-        this.logger.debug(`Dịch: "${text}" → "${translatedText}"`);
-
-        return {
-          box: ocrResult.box,
-          originalText: text,
-          translatedText,
-          confidence: ocrResult.confidence,
-        };
-      } catch (error: any) {
-        // Log lỗi chi tiết để debug
-        this.logger.error(`Lỗi dịch "${text}": ${error.message}`);
-
-        // Trả về text gốc nếu dịch thất bại
-        return {
-          box: ocrResult.box,
-          originalText: text,
-          translatedText: text,
-          confidence: ocrResult.confidence,
-        };
+      if (text) {
+        inputJson[idx.toString()] = text;
+        validItems.push({ index: idx, ocrResult });
       }
     });
 
-    const results = await Promise.allSettled(promises);
+    if (validItems.length === 0) {
+      return [];
+    }
 
-    return results
-      .filter(
-        (r): r is PromiseFulfilledResult<TranslatedBlock | null> =>
-          r.status === 'fulfilled' && r.value !== null,
-      )
-      .map((r) => r.value as TranslatedBlock);
+    const batchSystemPrompt = this.buildBatchSystemPrompt(
+      sourceLanguage,
+      targetLanguage,
+    );
+
+    try {
+      const response = await this.callOllamaChatAPI(
+        batchSystemPrompt,
+        JSON.stringify(inputJson),
+      );
+      const responseText = this.extractTranslatedText(response);
+
+      // Parse JSON response
+      const translatedJson = this.parseJsonResponse(responseText);
+
+      this.logger.debug(`Batch ${batchIndex}: Dịch ${validItems.length} items`);
+
+      // Map kết quả với box
+      return validItems.map(({ index, ocrResult }) => {
+        const translatedText =
+          translatedJson[index.toString()] || ocrResult.text;
+        return {
+          box: ocrResult.box,
+          originalText: ocrResult.text || '',
+          translatedText,
+          confidence: ocrResult.confidence,
+        };
+      });
+    } catch (error: any) {
+      this.logger.error(`Batch ${batchIndex} lỗi: ${error.message}`);
+      // Fallback: trả về text gốc cho tất cả items trong batch
+      return validItems.map(({ ocrResult }) => ({
+        box: ocrResult.box,
+        originalText: ocrResult.text || '',
+        translatedText: ocrResult.text || '',
+        confidence: ocrResult.confidence,
+      }));
+    }
+  }
+
+  /**
+   * System prompt cho batch translation với JSON format
+   */
+  private buildBatchSystemPrompt(
+    sourceLanguage?: string,
+    targetLanguage: string = 'Tiếng Việt',
+  ): string {
+    const langInstruction = sourceLanguage
+      ? `Dịch từ ${sourceLanguage} sang ${targetLanguage}.`
+      : `Dịch sang ${targetLanguage}.`;
+
+    return `Bạn là dịch giả. ${langInstruction}
+INPUT: JSON object với key là index, value là text cần dịch.
+OUTPUT: JSON object với CÙNG key, value là bản dịch.
+
+QUY TẮC:
+- CHỈ trả về JSON thuần, không giải thích.
+- GIỮ NGUYÊN tất cả keys.
+- Không dịch từ chuyên ngành, URL, code.
+
+VÍ DỤ:
+Input: {"0": "Hello", "1": "Get started"}
+Output: {"0": "Xin chào", "1": "Bắt đầu"}`;
+  }
+
+  /**
+   * Parse JSON response, xử lý trường hợp model trả về không đúng format
+   */
+  private parseJsonResponse(text: string): Record<string, string> {
+    try {
+      // Tìm JSON trong response (có thể có text thừa)
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        return JSON.parse(jsonMatch[0]);
+      }
+      return {};
+    } catch (error) {
+      this.logger.warn(`Không thể parse JSON response: ${text}`);
+      return {};
+    }
   }
 }

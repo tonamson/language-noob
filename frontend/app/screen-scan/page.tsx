@@ -4,15 +4,6 @@ import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { ImageTranslateService, TranslatedBlock } from "../services/image-translate.service";
 
-interface Display {
-  id: number;
-  index: number;
-  bounds: { x: number; y: number; width: number; height: number };
-  size: { width: number; height: number };
-  scaleFactor: number;
-  label: string;
-}
-
 interface SelectionBox {
   id: string;
   startX: number;
@@ -30,8 +21,6 @@ interface CroppedDebugImage {
 }
 
 export default function ScreenScanPage() {
-  const [displays, setDisplays] = useState<Display[]>([]);
-  const [selectedDisplayId, setSelectedDisplayId] = useState<number | null>(null);
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [isCapturing, setIsCapturing] = useState(false);
   const [status, setStatus] = useState<string>("");
@@ -41,25 +30,12 @@ export default function ScreenScanPage() {
   const [currentBox, setCurrentBox] = useState<Omit<SelectionBox, 'id'> | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
   // Debug state
   const [debugImages, setDebugImages] = useState<CroppedDebugImage[]>([]);
   const [translatingCount, setTranslatingCount] = useState(0);
-
-  useEffect(() => {
-    if (typeof window === "undefined" || !window.electronAPI) {
-      return;
-    }
-
-    const electronAPI = window.electronAPI;
-
-    electronAPI.getDisplays().then((displaysList: Display[]) => {
-      setDisplays(displaysList);
-      if (displaysList.length > 0) {
-        setSelectedDisplayId(displaysList[0].id);
-      }
-    });
-  }, []);
 
   // Vẽ selection boxes lên canvas
   useEffect(() => {
@@ -117,31 +93,88 @@ export default function ScreenScanPage() {
   }, [currentBox, capturedImage]);
 
   const handleCaptureScreen = async () => {
-    if (!window.electronAPI) {
-      alert("Tính năng này chỉ hoạt động trong Electron app");
-      return;
-    }
-
-    if (selectedDisplayId === null) {
-      setStatus("Vui lòng chọn màn hình trước");
-      return;
-    }
-
     try {
       setIsCapturing(true);
-      setStatus("Đang chụp màn hình...");
+      setStatus("Chọn màn hình để chụp...");
 
-      const result = await window.electronAPI.captureScreenOnce(selectedDisplayId);
-
-      if (result.success && result.imageData) {
-        setCapturedImage(result.imageData);
-        setCurrentBox(null);
-        setStatus("Đã chụp màn hình. Vẽ box để tự động dịch vùng đó.");
-      } else {
-        setStatus(`Lỗi: ${result.error || "Không thể chụp màn hình"}`);
+      // Kiểm tra browser hỗ trợ Screen Capture API
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+        setStatus("Trình duyệt không hỗ trợ chụp màn hình");
+        setIsCapturing(false);
+        return;
       }
+
+      // Yêu cầu quyền chụp màn hình
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: {
+          cursor: "never" // Không hiển thị con trỏ chuột
+        } as MediaTrackConstraints
+      });
+
+      streamRef.current = stream;
+      setStatus("Đang xử lý...");
+
+      // Tạo video element để capture frame
+      const video = document.createElement("video");
+      videoRef.current = video;
+      video.srcObject = stream;
+      video.autoplay = true;
+      video.playsInline = true;
+
+      // Đợi video load metadata để có kích thước
+      await new Promise<void>((resolve) => {
+        video.onloadedmetadata = () => {
+          video.play();
+          resolve();
+        };
+      });
+
+      // Đợi thêm một chút để đảm bảo frame đầu tiên đã sẵn sàng
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Capture frame từ video thành canvas
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext("2d");
+
+      if (!ctx) {
+        setStatus("Lỗi: Không thể tạo canvas context");
+        setIsCapturing(false);
+        return;
+      }
+
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      // Convert canvas thành data URL
+      const imageData = canvas.toDataURL("image/png");
+
+      // Dừng stream ngay sau khi capture
+      stream.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+      videoRef.current = null;
+
+      // Lưu ảnh đã chụp
+      setCapturedImage(imageData);
+      setCurrentBox(null);
+      setStatus("Đã chụp màn hình. Vẽ box để tự động dịch vùng đó.");
+
     } catch (error) {
-      setStatus(`Lỗi: ${error instanceof Error ? error.message : "Unknown error"}`);
+      if (error instanceof Error) {
+        if (error.name === "NotAllowedError") {
+          setStatus("Bạn đã từ chối quyền chụp màn hình");
+        } else {
+          setStatus(`Lỗi: ${error.message}`);
+        }
+      } else {
+        setStatus("Lỗi: Không thể chụp màn hình");
+      }
+
+      // Cleanup stream nếu có lỗi
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+        streamRef.current = null;
+      }
     } finally {
       setIsCapturing(false);
     }
@@ -383,32 +416,20 @@ export default function ScreenScanPage() {
             {/* Controls - Compact */}
             <div className="rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
               <div className="flex items-center gap-3 p-3">
-                <select
-                  value={selectedDisplayId || ""}
-                  onChange={(e) => {
-                    setSelectedDisplayId(Number(e.target.value));
-                    setCapturedImage(null);
-                    setCurrentBox(null);
-                  }}
-                  className="flex-1 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500/20 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-50"
-                >
-                  {displays.map((display) => (
-                    <option key={display.id} value={display.id}>
-                      {display.label}
-                    </option>
-                  ))}
-                </select>
+                <div className="flex-1 text-sm text-zinc-600 dark:text-zinc-400">
+                  Nhấn nút Chụp để chọn màn hình hoặc cửa sổ cần chụp
+                </div>
 
                 <button
                   onClick={handleCaptureScreen}
-                  disabled={selectedDisplayId === null || isCapturing}
+                  disabled={isCapturing}
                   className="flex items-center gap-2 rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50 whitespace-nowrap"
                 >
                   <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
                   </svg>
-                  Chụp
+                  Chụp Màn Hình
                 </button>
               </div>
 
@@ -456,7 +477,10 @@ export default function ScreenScanPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
                 </svg>
                 <p className="mt-4 text-sm text-zinc-500 dark:text-zinc-400">
-                  Chọn màn hình và nhấn "Chụp Màn Hình" để bắt đầu
+                  Nhấn &quot;Chụp Màn Hình&quot; để bắt đầu
+                </p>
+                <p className="mt-2 text-xs text-zinc-400 dark:text-zinc-500">
+                  Bạn sẽ được yêu cầu chọn màn hình hoặc cửa sổ muốn chụp
                 </p>
               </div>
             )}

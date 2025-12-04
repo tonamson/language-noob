@@ -40,7 +40,7 @@ export class ImageOcrService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(ImageOcrService.name);
   private scheduler: Scheduler | null = null;
   private workers: Worker[] = [];
-  private readonly WORKER_COUNT = 2; // Số worker trong pool
+  private readonly WORKER_COUNT = 6; // Số worker trong pool
   private isInitialized = false;
 
   // Ngưỡng khoảng cách để tách words thành groups khác nhau (pixels)

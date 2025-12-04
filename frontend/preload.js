@@ -13,6 +13,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("start-screen-capture", displayId, interval),
   stopScreenCapture: () => ipcRenderer.invoke("stop-screen-capture"),
 
+  // Chụp màn hình 1 lần (không real-time)
+  captureScreenOnce: (displayId) =>
+    ipcRenderer.invoke("capture-screen-once", displayId),
+
   // Listen for screen capture frames
   onScreenCaptureFrame: (callback) => {
     ipcRenderer.on("screen-capture-frame", (event, data) => {

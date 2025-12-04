@@ -643,6 +643,30 @@ ipcMain.handle("stop-screen-capture", async () => {
   }
 });
 
+// IPC handler để chụp màn hình 1 lần (không real-time)
+ipcMain.handle("capture-screen-once", async (event, displayId) => {
+  try {
+    console.log(`Capturing screen once for display ${displayId}`);
+    const captureResult = await captureFullScreen(displayId);
+
+    if (captureResult.success && captureResult.imageData) {
+      return {
+        success: true,
+        imageData: captureResult.imageData,
+        displayId: displayId
+      };
+    } else {
+      return {
+        success: false,
+        error: captureResult.error || "Failed to capture screen"
+      };
+    }
+  } catch (error) {
+    console.error("Error capturing screen once:", error);
+    return { success: false, error: error.message };
+  }
+});
+
 app.whenReady().then(async () => {
   try {
     // Khởi động server tương ứng với môi trường

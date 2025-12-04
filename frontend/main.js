@@ -18,6 +18,8 @@ let apiProcess = null;
 let staticServer = null;
 let staticServerPort = 3456; // Port cho static server trong production
 let mainWindow = null; // Reference đến main window
+let selectionWindow = null; // Reference đến selection window
+let isQuitting = false; // Flag để tránh cleanup nhiều lần
 
 // Lấy đường dẫn đến config.json (có thể chỉnh sửa sau khi build)
 const getConfigPath = () => {
@@ -329,10 +331,17 @@ const killProcessOnPort = (port) => {
       const result = execSync(`lsof -ti:${port}`, { encoding: "utf-8" }).trim();
       if (result) {
         const pids = result.split("\n").filter((pid) => pid);
+        const currentPid = process.pid;
         pids.forEach((pid) => {
           try {
+            const pidNum = parseInt(pid);
+            // Không kill chính process này (Electron main process)
+            if (pidNum === currentPid) {
+              console.log(`Skipping current process ${pid} on port ${port}`);
+              return;
+            }
             console.log(`Killing process ${pid} on port ${port}...`);
-            process.kill(parseInt(pid), "SIGKILL");
+            process.kill(pidNum, "SIGKILL");
           } catch (e) {
             console.warn(`Failed to kill process ${pid}:`, e.message);
           }
@@ -712,25 +721,52 @@ app.whenReady().then(async () => {
   });
 });
 
+// Helper để đợi một khoảng thời gian
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 // Dừng tất cả processes
 const stopAllProcesses = async (force = false) => {
+  // Kiểm tra flag để tránh chạy nhiều lần
+  if (isQuitting) {
+    console.log("Already quitting, skipping cleanup...");
+    return;
+  }
+  isQuitting = true;
+
   console.log("Stopping all processes...");
+
+  // Đóng selection window trước
+  if (selectionWindow) {
+    console.log("Closing selection window...");
+    try {
+      selectionWindow.close();
+    } catch (err) {
+      console.error("Error closing selection window:", err);
+    }
+    selectionWindow = null;
+  }
 
   // Dừng Next.js dev server nếu đang chạy
   if (nextProcess) {
     console.log("Stopping Next.js dev server...");
     try {
+      const pid = nextProcess.pid;
+
       if (force) {
         nextProcess.kill("SIGKILL");
       } else {
         nextProcess.kill("SIGTERM");
-        // Đợi một chút để process tự tắt, nếu không thì force kill
-        setTimeout(() => {
-          if (nextProcess && !nextProcess.killed) {
-            console.log("Force killing Next.js dev server...");
+        // Đợi process tự tắt
+        await wait(1000);
+        // Nếu vẫn chưa tắt thì force kill
+        if (nextProcess && !nextProcess.killed) {
+          console.log("Force killing Next.js dev server...");
+          try {
             nextProcess.kill("SIGKILL");
+          } catch (e) {
+            // Ignore error nếu process đã tắt
           }
-        }, 1000);
+        }
       }
     } catch (err) {
       console.error("Error stopping Next.js dev server:", err);
@@ -759,13 +795,10 @@ const stopAllProcesses = async (force = false) => {
             try {
               process.kill(pid, "SIGKILL");
             } catch (e2) {
-              console.error("Failed to kill API process:", e2);
+              // Ignore
             }
           }
         }
-        // Kill process trên port để đảm bảo
-        const apiPort = getApiPort(API_LINK);
-        await killProcessOnPort(apiPort);
       } else {
         // Graceful shutdown: gửi SIGTERM trước
         console.log(`Sending SIGTERM to API server (PID: ${pid})...`);
@@ -776,47 +809,37 @@ const stopAllProcesses = async (force = false) => {
             try {
               process.kill(pid, "SIGTERM");
             } catch (e2) {
-              console.error("Failed to send SIGTERM:", e2);
+              // Ignore
             }
           }
         }
 
-        // Đợi một chút để process tự tắt, nếu không thì force kill
-        setTimeout(async () => {
-          if (apiProcess && !apiProcess.killed && pid) {
-            console.log(`Force killing API server (PID: ${pid})...`);
+        // Đợi 1 giây để process tự tắt
+        await wait(1000);
+
+        // Nếu vẫn chưa tắt thì force kill
+        if (apiProcess && !apiProcess.killed && pid) {
+          console.log(`Force killing API server (PID: ${pid})...`);
+          try {
+            apiProcess.kill("SIGKILL");
+          } catch (e) {
             try {
-              apiProcess.kill("SIGKILL");
-            } catch (e) {
-              try {
-                process.kill(pid, "SIGKILL");
-              } catch (e2) {
-                console.error("Failed to force kill API process:", e2);
-              }
+              process.kill(pid, "SIGKILL");
+            } catch (e2) {
+              // Ignore
             }
-            // Kill process trên port để đảm bảo
-            const apiPort = getApiPort(API_LINK);
-            await killProcessOnPort(apiPort);
           }
-        }, 2000); // Tăng timeout lên 2 giây
+        }
       }
 
-      // Đợi một chút để đảm bảo process đã tắt
-      setTimeout(() => {
-        apiProcess = null;
-      }, 100);
+      apiProcess = null;
     } catch (err) {
       console.error("Error stopping API server:", err);
       apiProcess = null;
     }
-  } else {
-    // Nếu không có apiProcess reference, vẫn thử kill process trên port
-    console.log("No API process reference, killing process on port...");
-    const apiPort = getApiPort(API_LINK);
-    await killProcessOnPort(apiPort);
   }
 
-  // Luôn kill process trên port API để đảm bảo (dù có reference hay không)
+  // Luôn kill process trên port API để đảm bảo
   const apiPort = getApiPort(API_LINK);
   console.log(`Killing processes on port ${apiPort} (API server)...`);
   await killProcessOnPort(apiPort);
@@ -838,65 +861,70 @@ const stopAllProcesses = async (force = false) => {
   );
   await killProcessOnPort(staticServerPort);
 
+  // Dừng screen capture nếu đang chạy
+  if (screenCaptureInterval) {
+    console.log("Stopping screen capture...");
+    clearInterval(screenCaptureInterval);
+    screenCaptureInterval = null;
+  }
+
+  // Đợi thêm một chút để đảm bảo tất cả async operations hoàn thành
+  await wait(500);
+
   console.log("All processes stopped.");
 };
 
-// Đóng selection window nếu đang mở
-const closeSelectionWindow = () => {
-  if (selectionWindow) {
-    console.log("Closing selection window...");
-    try {
-      selectionWindow.close();
-    } catch (err) {
-      console.error("Error closing selection window:", err);
-    }
-    selectionWindow = null;
+app.on("window-all-closed", async () => {
+  // Nếu đang cleanup rồi thì không làm gì
+  if (isQuitting) {
+    return;
   }
-};
 
-app.on("window-all-closed", (event) => {
-  // Đóng selection window trước
-  closeSelectionWindow();
+  // Dừng tất cả processes trước khi quit
+  await stopAllProcesses();
 
-  // Dừng tất cả processes
-  stopAllProcesses();
+  // Đợi thêm chút để đảm bảo cleanup hoàn tất
+  await wait(200);
 
-  if (process.platform !== "darwin") {
-    app.quit();
-  } else {
-    // Trên macOS, vẫn quit app khi đóng window
-    app.quit();
-  }
+  // Force exit để không trigger thêm events
+  process.exit(0);
 });
 
-app.on("before-quit", (event) => {
+app.on("before-quit", async (event) => {
+  // Nếu đang trong quá trình cleanup, không làm gì cả
+  if (isQuitting) {
+    return;
+  }
+
+  // Prevent default để đợi cleanup hoàn thành
+  event.preventDefault();
+
   console.log("App is about to quit, stopping all processes...");
-  closeSelectionWindow();
-  stopAllProcesses();
-});
+  await stopAllProcesses();
 
-app.on("will-quit", (event) => {
-  console.log("App will quit, force stopping all processes...");
-  closeSelectionWindow();
-  stopAllProcesses(true); // Force kill
+  // Đợi thêm chút để đảm bảo cleanup hoàn tất
+  await wait(200);
+
+  // Sau khi cleanup xong, force exit (không trigger events nữa)
+  process.exit(0);
 });
 
 // Xử lý khi app bị terminate đột ngột
 process.on("SIGINT", async () => {
   console.log("Received SIGINT, stopping all processes...");
   await stopAllProcesses(true);
-  app.quit();
+  process.exit(0);
 });
 
 process.on("SIGTERM", async () => {
   console.log("Received SIGTERM, stopping all processes...");
   await stopAllProcesses(true);
-  app.quit();
+  process.exit(0);
 });
 
 // Xử lý uncaught exceptions
 process.on("uncaughtException", async (error) => {
   console.error("Uncaught exception:", error);
   await stopAllProcesses(true);
-  app.quit();
+  process.exit(1);
 });

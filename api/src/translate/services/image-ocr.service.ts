@@ -222,15 +222,15 @@ export class ImageOcrService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Merge các words gần nhau thành groups
-   * Words cách xa nhau (> WORD_GAP_THRESHOLD pixels) sẽ thành groups riêng
+   * Merge tất cả words thành 1 block duy nhất
+   * Vì client đã tự crop từng đoạn văn riêng, nên không cần tách theo dòng nữa
    * @param words Danh sách words
-   * @returns Danh sách OcrResult (mỗi item là 1 group words)
+   * @returns Danh sách OcrResult (chỉ 1 item duy nhất)
    */
   private mergeWordsIntoGroups(words: TesseractWord[]): OcrResult[] {
     if (words.length === 0) return [];
 
-    // Sort words theo vị trí: y trước (từ trên xuống), rồi x (từ trái qua)
+    // Sort words theo vị trí để đọc đúng thứ tự: y trước (từ trên xuống), rồi x (từ trái qua)
     const sortedWords = [...words].sort((a, b) => {
       const yDiff = a.bbox.y0 - b.bbox.y0;
       // Nếu cùng dòng (y gần nhau), sort theo x
@@ -240,36 +240,9 @@ export class ImageOcrService implements OnModuleInit, OnModuleDestroy {
       return yDiff;
     });
 
-    const groups: OcrResult[] = [];
-    let currentGroup: TesseractWord[] = [sortedWords[0]];
-
-    for (let i = 1; i < sortedWords.length; i++) {
-      const currentWord = sortedWords[i];
-      const lastWord = currentGroup[currentGroup.length - 1];
-
-      // Kiểm tra xem word hiện tại có cùng dòng và gần với group không
-      const isSameLine =
-        Math.abs(currentWord.bbox.y0 - lastWord.bbox.y0) <
-        this.LINE_HEIGHT_THRESHOLD;
-      const horizontalGap = currentWord.bbox.x0 - lastWord.bbox.x1;
-      const isClose = horizontalGap < this.WORD_GAP_THRESHOLD;
-
-      if (isSameLine && isClose) {
-        // Thêm vào group hiện tại
-        currentGroup.push(currentWord);
-      } else {
-        // Tạo group mới
-        groups.push(this.createGroupFromWords(currentGroup));
-        currentGroup = [currentWord];
-      }
-    }
-
-    // Đừng quên group cuối cùng
-    if (currentGroup.length > 0) {
-      groups.push(this.createGroupFromWords(currentGroup));
-    }
-
-    return groups;
+    // Merge TẤT CẢ words thành 1 block duy nhất
+    // Vì client đã crop từng đoạn văn riêng rồi
+    return [this.createGroupFromWords(sortedWords)];
   }
 
   /**
@@ -284,8 +257,26 @@ export class ImageOcrService implements OnModuleInit, OnModuleDestroy {
     const x1 = Math.max(...words.map((w) => w.bbox.x1));
     const y1 = Math.max(...words.map((w) => w.bbox.y1));
 
-    // Merge text
-    const text = words.map((w) => w.text).join(' ');
+    // Merge text với xử lý xuống dòng
+    // Nếu 2 words có y0 khác nhau đáng kể → xuống dòng
+    let text = '';
+    let lastY = words[0]?.bbox.y0 || 0;
+
+    for (let i = 0; i < words.length; i++) {
+      const word = words[i];
+      const currentY = word.bbox.y0;
+
+      // Kiểm tra có xuống dòng không
+      if (i > 0 && Math.abs(currentY - lastY) > this.LINE_HEIGHT_THRESHOLD) {
+        text += '\n' + word.text;
+      } else if (i > 0) {
+        text += ' ' + word.text;
+      } else {
+        text = word.text;
+      }
+
+      lastY = currentY;
+    }
 
     // Tính confidence trung bình
     const avgConfidence =

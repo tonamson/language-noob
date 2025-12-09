@@ -1,0 +1,124 @@
+/* Language Noob - Extension Styles */
+/* Thiết kế tối giản, clean */
+
+/* Floating translate button */
+#language-noob-btn {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  width: 44px;
+  height: 44px;
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  color: #333;
+  cursor: pointer;
+  z-index: 2147483647;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  transition: all 0.2s ease;
+  user-select: none;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+#language-noob-btn i {
+  line-height: 1;
+}
+
+#language-noob-btn:hover {
+  background: rgba(255, 255, 255, 1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  transform: translateY(-1px);
+}
+
+#language-noob-btn:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+}
+
+#language-noob-btn.loading {
+  opacity: 0.7;
+}
+
+/* Undo button - cùng size với button chính */
+#language-noob-undo {
+  position: fixed;
+  top: 72px;
+  right: 20px;
+  width: 44px;
+  height: 44px;
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  color: #333;
+  cursor: pointer;
+  z-index: 2147483647;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  transition: all 0.2s ease;
+  user-select: none;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+#language-noob-undo i {
+  line-height: 1;
+}
+
+#language-noob-undo:hover {
+  background: rgba(255, 255, 255, 1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  transform: translateY(-1px);
+}
+
+#language-noob-undo:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+}
+
+/* Toast notification */
+#language-noob-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(80px);
+  background: rgba(30, 30, 30, 0.9);
+  color: white;
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  z-index: 2147483647;
+  opacity: 0;
+  transition: all 0.3s ease;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  max-width: 90vw;
+  text-align: center;
+}
+
+#language-noob-toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+  #language-noob-btn,
+  #language-noob-undo {
+    background: rgba(50, 50, 50, 0.95);
+    border-color: rgba(255, 255, 255, 0.1);
+  }
+
+  #language-noob-btn:hover,
+  #language-noob-undo:hover {
+    background: rgba(60, 60, 60, 1);
+  }
+}

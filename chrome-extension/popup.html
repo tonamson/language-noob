@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Language Noob Settings</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        width: 320px;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          sans-serif;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 20px;
+      }
+
+      .container {
+        background: white;
+        border-radius: 16px;
+        padding: 20px;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+      }
+
+      h1 {
+        font-size: 18px;
+        color: #333;
+        margin-bottom: 4px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      h1 span {
+        font-size: 24px;
+      }
+
+      .subtitle {
+        color: #666;
+        font-size: 12px;
+        margin-bottom: 20px;
+      }
+
+      .form-group {
+        margin-bottom: 16px;
+      }
+
+      label {
+        display: block;
+        font-size: 12px;
+        font-weight: 600;
+        color: #555;
+        margin-bottom: 6px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      input[type="text"] {
+        width: 100%;
+        padding: 12px 14px;
+        border: 2px solid #e1e5eb;
+        border-radius: 10px;
+        font-size: 14px;
+        transition: all 0.3s ease;
+        outline: none;
+      }
+
+      input[type="text"]:focus {
+        border-color: #667eea;
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+      }
+
+      button {
+        width: 100%;
+        padding: 12px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border: none;
+        border-radius: 10px;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s ease;
+      }
+
+      button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+      }
+
+      button:active {
+        transform: translateY(0);
+      }
+
+      .status {
+        text-align: center;
+        font-size: 12px;
+        margin-top: 12px;
+        padding: 8px;
+        border-radius: 8px;
+        display: none;
+      }
+
+      .status.success {
+        display: block;
+        background: #d4edda;
+        color: #155724;
+      }
+
+      .status.error {
+        display: block;
+        background: #f8d7da;
+        color: #721c24;
+      }
+
+      .help {
+        font-size: 11px;
+        color: #888;
+        margin-top: 16px;
+        padding-top: 16px;
+        border-top: 1px solid #f0f0f0;
+      }
+
+      .help p {
+        margin-bottom: 8px;
+      }
+
+      .help code {
+        background: #f5f5f5;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1><span>🌐</span> Language Noob</h1>
+      <p class="subtitle">Cấu hình API dịch thuật</p>
+
+      <div class="form-group">
+        <label for="apiUrl">API URL</label>
+        <input type="text" id="apiUrl" placeholder="http://localhost:2053" />
+      </div>
+
+      <button id="saveBtn">💾 Lưu cấu hình</button>
+
+      <div class="status" id="status"></div>
+
+      <div class="help">
+        <p><strong>Hướng dẫn sử dụng:</strong></p>
+        <p>1. Đảm bảo API server đang chạy tại URL trên</p>
+        <p>2. Click nút 🌐 góc phải trên để dịch trang</p>
+        <p>3. Click ↩️ để hoàn tác</p>
+      </div>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

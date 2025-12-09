@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "Language Noob - Page Translator",
+  "version": "1.0.0",
+  "description": "Dịch toàn bộ văn bản trang web sang Tiếng Việt",
+  "permissions": ["activeTab", "storage"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Language Noob Translator"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "css": ["styles.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "host_permissions": [
+    "http://localhost:*/*",
+    "http://127.0.0.1:*/*",
+    "https://*/*",
+    "http://*/*"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "fontawesome-free-7.1.0-web/css/*",
+        "fontawesome-free-7.1.0-web/webfonts/*"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

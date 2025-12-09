@@ -22,7 +22,7 @@ export class TranslateService {
   private readonly logger = new Logger(TranslateService.name);
   private ollamaApiUrl: string;
   // Dùng model nhỏ hơn để tăng tốc độ: qwen3:1.8b hoặc qwen3:4b
-  private readonly translateModel = 'qwen3:8b';
+  private readonly translateModel = 'qwen2.5:7b-instruct-q4_0';
   private readonly stream = false;
   private readonly think = false;
   constructor(
@@ -75,7 +75,7 @@ YÊU CẦU:
           stream: this.stream,
           think: this.think,
           options: {
-            temperature: 0.1,
+            temperature: 0,
             num_ctx: 512, // Context nhỏ để nhanh hơn
           },
         },

@@ -1,83 +1,54 @@
-# Cấu hình API Link
+# Cấu hình API
 
-Frontend có thể được cấu hình để gọi API ở bất kỳ URL nào thông qua file `config.json` hoặc biến môi trường `API_LINK`.
+Frontend có thể được cấu hình để gọi API ở bất kỳ URL nào thông qua biến môi trường.
 
 ## Cách cấu hình
 
-### 1. Qua file `config.json` (Có thể chỉnh sửa sau khi build)
+### Qua Environment Variable
 
-File `config.json` được copy vào app và **có thể chỉnh sửa sau khi build**.
-
-**Vị trí file sau khi build:**
-
-- macOS: `Language Noob.app/Contents/Resources/config.json`
-- Windows: `resources/config.json` (trong thư mục app)
-- Linux: `resources/config.json` (trong thư mục app)
-- Hoặc cùng thư mục với executable file
-
-**Chỉnh sửa file:**
-
-```json
-{
-  "apiLink": "http://127.0.0.1:2053"
-}
-```
-
-### 2. Qua Environment Variable (Ưu tiên cao nhất)
-
-Khi build hoặc chạy Electron app, set biến môi trường `API_LINK`:
+Tạo file `.env.local` trong thư mục `frontend/`:
 
 ```bash
-# Build với API link tùy chỉnh
-API_LINK=https://api.example.com npm run build:mac
-
-# Hoặc chạy với API link tùy chỉnh
-API_LINK=http://192.168.1.100:3000 npm run start:electron
+NEXT_PUBLIC_API_URL=http://localhost:2053
 ```
 
-### 3. Thứ tự ưu tiên
+### Thứ tự ưu tiên
 
-1. **Environment Variable `API_LINK`** (cao nhất)
-2. **File `config.json`** (có thể chỉnh sửa sau khi build)
-3. **Mặc định**: `http://127.0.0.1:2053` (port của API build)
-
-## Lưu ý
-
-- File `config.json` **KHÔNG** bị bundle vào asar, có thể chỉnh sửa sau khi build
-- Nếu không có `config.json` hoặc không set `apiLink`, sẽ dùng mặc định `http://127.0.0.1:2053`
-- Nếu `API_LINK` trỏ đến localhost (`127.0.0.1` hoặc `localhost`), Electron sẽ tự động khởi động API server local
-- Nếu `API_LINK` trỏ đến remote server, Electron sẽ không khởi động API server local
-- API server local sẽ tự động đọc port từ URL trong `API_LINK` (nếu là localhost)
+1. **Environment Variable `NEXT_PUBLIC_API_URL`**
+2. **Mặc định**: `http://localhost:2053`
 
 ## Ví dụ
 
-### Sử dụng API local (mặc định)
+### Development với API local
 
-```json
-{
-  "apiLink": "http://127.0.0.1:2053"
-}
+```bash
+# .env.local
+NEXT_PUBLIC_API_URL=http://localhost:2053
 ```
 
-### Sử dụng API remote
+### Production với API remote
 
-```json
-{
-  "apiLink": "https://api.myserver.com"
-}
+```bash
+# .env.production
+NEXT_PUBLIC_API_URL=https://api.example.com
 ```
 
-### Sử dụng API trên mạng local
+### API trên mạng local
 
-```json
-{
-  "apiLink": "http://192.168.1.100:3000"
-}
+```bash
+# .env.local
+NEXT_PUBLIC_API_URL=http://192.168.1.100:2053
 ```
 
-## Cách chỉnh sửa sau khi build
+## Build với API URL tùy chỉnh
 
-1. Tìm file `config.json` trong thư mục Resources của app
-2. Mở bằng text editor
-3. Thay đổi giá trị `apiLink`
-4. Lưu và restart app
+```bash
+# Build với API URL cụ thể
+NEXT_PUBLIC_API_URL=https://api.example.com npm run build
+```
+
+## Lưu ý
+
+- Biến môi trường **phải** bắt đầu bằng `NEXT_PUBLIC_` để Next.js expose cho client-side code
+- Thay đổi `.env` files cần rebuild app để có hiệu lực
+- File `.env.local` không nên commit vào git (đã có trong `.gitignore`)

@@ -2,137 +2,27 @@
   "name": "frontend",
   "version": "0.1.0",
   "private": true,
-  "main": "main.js",
   "author": "Language Noob",
   "description": "Dịch thuật thông minh - Chat và quét màn hình",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "dev:electron": "NODE_ENV=development electron .",
-    "start:electron": "electron .",
-    "build:api": "cd ../api && npm run build",
-    "build:all-code": "npm run build:api && npm run build",
-    "build:electron": "npm run build:all-code && electron-builder",
-    "build:win": "npm run build:all-code && electron-builder --win",
-    "build:mac": "npm run build:all-code && electron-builder --mac",
-    "build:linux": "npm run build:all-code && electron-builder --linux",
-    "build:platforms": "npm run build:all-code && electron-builder --win --mac --linux",
     "lint": "eslint"
-  },
-  "build": {
-    "appId": "com.languagenoob.app",
-    "productName": "Language Noob",
-    "directories": {
-      "output": "release"
-    },
-    "files": [
-      "dist/**/*",
-      "main.js",
-      "preload.js",
-      "config.json",
-      "package.json",
-      "node_modules/**/*"
-    ],
-    "extraResources": [
-      {
-        "from": "../api/dist",
-        "to": "api/dist",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
-        "from": "../api/node_modules",
-        "to": "api/node_modules",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
-        "from": "../api/package.json",
-        "to": "api/package.json"
-      },
-      {
-        "from": "config.json",
-        "to": "config.json"
-      }
-    ],
-    "asar": true,
-    "asarUnpack": [
-      "dist/**/*"
-    ],
-    "win": {
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64",
-            "ia32"
-          ]
-        },
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "icon": "build/icon.ico"
-    },
-    "mac": {
-      "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        },
-        {
-          "target": "zip",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        }
-      ],
-      "icon": "build/icon.icns",
-      "category": "public.app-category.utilities",
-      "hardenedRuntime": true,
-      "gatekeeperAssess": false
-    },
-    "linux": {
-      "target": [
-        "AppImage",
-        "deb",
-        "rpm"
-      ],
-      "icon": "build/icon.png",
-      "category": "Utility"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
-    }
   },
   "dependencies": {
     "axios": "^1.13.2",
-    "next": "16.0.6",
-    "react": "19.2.0",
-    "react-dom": "19.2.0"
+    "next": "^16.0.8",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "electron": "^39.2.4",
-    "electron-builder": "^25.1.8",
     "eslint": "^9",
-    "eslint-config-next": "16.0.6",
+    "eslint-config-next": "^16.0.8",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

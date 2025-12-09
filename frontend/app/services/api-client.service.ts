@@ -8,18 +8,12 @@ import axios, {
 /**
  * Lấy API URL từ các nguồn theo thứ tự ưu tiên:
  * 1. baseURL được truyền vào (nếu có)
- * 2. window.__API_URL__ (được inject từ Electron preload script)
- * 3. process.env.NEXT_PUBLIC_API_URL (biến môi trường)
- * 4. http://localhost:7890 (mặc định)
+ * 2. process.env.NEXT_PUBLIC_API_URL (biến môi trường)
+ * 3. http://localhost:2053 (mặc định)
  */
 const getApiBaseURL = (baseURL?: string): string => {
   if (baseURL) {
     return baseURL;
-  }
-
-  // Trong Electron, API URL được inject vào window qua preload script
-  if (typeof window !== "undefined" && window.__API_URL__) {
-    return window.__API_URL__;
   }
 
   // Fallback về biến môi trường hoặc mặc định
